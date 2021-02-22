@@ -118,7 +118,7 @@ def daily_last14_deaths_plot(pdf):
         pdf.cell(col_width, th, str(
             deaths.iloc[l-i-1, 1]), border=1, align='C')
         pdf.cell(col_width, th, str(
-            deaths.iloc[l-i-1, 0]), border=1, align='C')
+            f"%d" % deaths.iloc[l-i-1, 0]), border=1, align='C')
         pdf.ln(th)
 
     pdf.image("images/deaths_daily.png", x=0, y=60, w=100, h=90)
@@ -183,7 +183,7 @@ def cases_daily_plot(cases, pdf):
         pdf.cell(col_width, th, str(
             f'{dates[l-i-1].date().year}-{str(dates[l-i-1].date().month).zfill(2)}-{str(dates[l-i-1].date().day).zfill(2)}'), border=1, align='C')
         pdf.cell(col_width, th, str(
-            cases.iloc[l-i-1, 1]), border=1, align='C')
+            f"%d" % cases.iloc[l-i-1, 1]), border=1, align='C')
         pdf.ln(th)
 
     pdf.image("images/cases_daily.png", x=0, y=120, w=100, h=90)
@@ -224,7 +224,7 @@ def case_test_perc_plot(pdf):
     plt.tight_layout()
 
     plt.savefig("images/case_test.png")
-
+    pdf.set_font('DejaVu', '', 8)
     epw = pdf.w - 2*pdf.l_margin
     col_width = epw/4
     th = pdf.font_size
@@ -252,11 +252,11 @@ def case_test_perc_plot(pdf):
         pdf.cell(col_width, th, str(
             f'{dates[l-i-1].date().year}-{str(dates[l-i-1].date().month).zfill(2)}-{str(dates[l-i-1].date().day).zfill(2)}'), border=1, align='C')
         pdf.cell(col_width, th, str(
-            new_cases_tests.iloc[l-i-1, 1]), border=1, align='C')
+            f"%d" % new_cases_tests.iloc[l-i-1, 1]), border=1, align='C')
         pdf.cell(col_width, th, str(
-            new_cases_tests.iloc[l-i-1, 2]), border=1, align='C')
+            f"%d" % new_cases_tests.iloc[l-i-1, 2]), border=1, align='C')
         pdf.cell(col_width, th, str(
-            new_cases_tests.iloc[l-i-1, 3]), border=1, align='C')
+            f"%.2f" % new_cases_tests.iloc[l-i-1, 3]), border=1, align='C')
         pdf.ln(th)
 
     pdf.ln(10)
@@ -353,9 +353,12 @@ def model(cases, pdf):
     new_cases_prediction = scaler.inverse_transform(new_cases_prediction_sc)
 
     pdf.set_font('DejaVu', '', 16)
+    epw = pdf.w - 2*pdf.l_margin
+    pdf.ln(20)
+    pdf.cell(
+        epw, 0.0, "Πρόβλεψη κρουσμάτων: " + str(math.floor(new_cases_prediction[0][0])), align='C')
 
-    pdf.write(230, "Πρόβλεψη για " +
-              datetime.today().strftime('%Y-%m-%d') + " :" + str(math.floor(new_cases_prediction[0][0])))
+    cases['new_cases'] = scaler.inverse_transform(cases[['new_cases']])
 
 
 def last_14_days_cases_plot(cases, pdf):
@@ -390,16 +393,15 @@ def prepare_pdf():
     pdf.set_font('DejaVu', '', 24)
     pdf.ln(60)
     pdf.cell(
-        epw, 0.0, 'Covid Analytics Report', align='C')
+        epw, 0.0, 'Ανάλυση της πορείας του Covid-19', align='C')
     pdf.ln(10)
     pdf.set_font('DejaVu', '', 16)
     pdf.cell(
         epw, 0.0, datetime.today().strftime("%Y-%m-%d"), align='C')
     pdf.ln(5)
 
+    model(cases, pdf)
     pdf.add_page()
-
-    pdf.set_font('DejaVu', '', 8)
 
     return pdf
 
@@ -448,65 +450,67 @@ def create_report(case, cases_week, age_dist_cases, age_dist_deaths):
 
     age_distribution_plot(age_dist_deaths, title="Συνολικοί θανάτοι ανα ηλικία",
                           ylabel="Θανάτοι", file="images/age_deaths.png", pdf=pdf, x=105, y=155)
-    model(case, pdf)
 
     pdf.output("report.pdf", "F")
 
 
-data = pd.read_csv(
-    "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv")
+def gather_data():
+
+    data = pd.read_csv(
+        "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv")
+
+    greece_data = data[data['location'] == 'Greece']
+
+    cases = greece_data[["new_cases", "date"]]
+    cases = cases.dropna(axis='rows')
+    cases = cases.reset_index(drop=True)
+    cases = cases.groupby('date')['new_cases'].sum().reset_index()
+
+    cases_week = greece_data[["new_cases", "date"]]
+    cases_week.date = pd.to_datetime(
+        cases_week['date'], errors='coerce', format='%Y-%m-%d')
+    cases_week.index = cases_week['date']
+    cases_week = cases_week.drop('date', axis=1)
+
+    cases_week = cases_week.resample('W').sum()
+
+    cases_week = cases_week.reset_index()
+
+    d = requests.get(
+        "https://covid-19-greece.herokuapp.com/age-distribution-history")
+    data_list = json.loads(d.text)['age-distribution']
+    date = list()
+    cases1 = list()
+    cases2 = list()
+    cases3 = list()
+    cases4 = list()
+    for row in data_list:
+        date.append(row['date'])
+        cases1.append(row['cases']['0-17'])
+        cases2.append(row['cases']['18-39'])
+        cases3.append(row['cases']['40-64'])
+        cases4.append(row['cases']['65+'])
+    data_dict = {'date': date, '0-17': cases1,
+                 '18-39': cases2, '40-64': cases3, '65+': cases4}
+    age_dist_cases = pd.DataFrame(data=data_dict)
+
+    date = list()
+    deaths1 = list()
+    deaths2 = list()
+    deaths3 = list()
+    deaths4 = list()
+    for row in data_list:
+        date.append(row['date'])
+        deaths1.append(row['deaths']['0-17'])
+        deaths2.append(row['deaths']['18-39'])
+        deaths3.append(row['deaths']['40-64'])
+        deaths4.append(row['deaths']['65+'])
+    data_dict = {'date': date, '0-17': deaths1,
+                 '18-39': deaths2, '40-64': deaths3, '65+': deaths4}
+    age_dist_deaths = pd.DataFrame(data=data_dict)
+
+    return greece_data, cases, cases_week, age_dist_cases, age_dist_deaths
 
 
-greece_data = data[data['location'] == 'Greece']
-
-cases = greece_data[["new_cases", "date"]]
-cases = cases.dropna(axis='rows')
-cases = cases.reset_index(drop=True)
-cases = cases.groupby('date')['new_cases'].sum().reset_index()
-
-
-cases_week = greece_data[["new_cases", "date"]]
-cases_week.date = pd.to_datetime(
-    cases_week['date'], errors='coerce', format='%Y-%m-%d')
-cases_week.index = cases_week['date']
-cases_week = cases_week.drop('date', axis=1)
-
-cases_week = cases_week.resample('W').sum()
-
-cases_week = cases_week.reset_index()
-
-
-d = requests.get(
-    "https://covid-19-greece.herokuapp.com/age-distribution-history")
-data_list = json.loads(d.text)['age-distribution']
-date = list()
-cases1 = list()
-cases2 = list()
-cases3 = list()
-cases4 = list()
-for row in data_list:
-    date.append(row['date'])
-    cases1.append(row['cases']['0-17'])
-    cases2.append(row['cases']['18-39'])
-    cases3.append(row['cases']['40-64'])
-    cases4.append(row['cases']['65+'])
-data_dict = {'date': date, '0-17': cases1,
-             '18-39': cases2, '40-64': cases3, '65+': cases4}
-age_dist_cases = pd.DataFrame(data=data_dict)
-
-date = list()
-cases1 = list()
-cases2 = list()
-cases3 = list()
-cases4 = list()
-for row in data_list:
-    date.append(row['date'])
-    cases1.append(row['deaths']['0-17'])
-    cases2.append(row['deaths']['18-39'])
-    cases3.append(row['deaths']['40-64'])
-    cases4.append(row['deaths']['65+'])
-data_dict = {'date': date, '0-17': cases1,
-             '18-39': cases2, '40-64': cases3, '65+': cases4}
-age_dist_deaths = pd.DataFrame(data=data_dict)
-
+greece_data, cases, cases_week, age_dist_cases, age_dist_deaths = gather_data()
 create_report(cases, cases_week, age_dist_cases, age_dist_deaths)
